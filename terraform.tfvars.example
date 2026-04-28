@@ -1,0 +1,9 @@
+tenancy_ocid             = "ocid1.tenancy.oc1..example"
+compartment_ocid         = "ocid1.compartment.oc1..example"
+region                   = "eu-frankfurt-1"
+availability_domain_index = 0
+container_image_url      = "ghcr.io/gpoul/fresh-dinosaurs"
+container_instance_name  = "deno-fresh-dinosaurs"
+# Optional: when unset, no DNS zone lookup or DNS record is created.
+# fqdn                  = "fresh-dinosaurs.mydomain.com"
+nosql_compartment_ocid   = "ocid1.compartment.oc1..example"
