@@ -12,6 +12,7 @@ type HealthResponse = {
   auth: {
     resourcePrincipalEnv: boolean;
     forcedResourcePrincipal: boolean;
+    cloudShell: boolean;
     useResourcePrincipalCompartment: boolean;
   };
   config: {
@@ -86,6 +87,19 @@ export const handler = define.handlers({
           parseBooleanEnv("NOSQL_USE_RESOURCE_PRINCIPAL") ||
           Deno.env.get("NOSQL_AUTH")?.trim().toLowerCase() ===
             "resource-principal",
+        cloudShell: parseBooleanEnv("NOSQL_USE_CLOUD_SHELL_AUTH") ||
+          Deno.env.get("OCI_CLI_AUTH")?.trim().toLowerCase() ===
+            "instance_obo_user" ||
+          [
+            "cloud-shell",
+            "cloud_shell",
+            "cloudshell",
+            "instance-obo-user",
+            "instance_obo_user",
+            "instanceobouser",
+          ].includes(
+            Deno.env.get("NOSQL_AUTH")?.trim().toLowerCase() ?? "",
+          ),
         useResourcePrincipalCompartment: parseBooleanEnv(
           "NOSQL_USE_RESOURCE_PRINCIPAL_COMPARTMENT",
         ),
@@ -95,6 +109,7 @@ export const handler = define.handlers({
         region: firstEnv(
           "NOSQL_REGION",
           "OCI_REGION",
+          "OCI_CLI_REGION",
           "OCI_RESOURCE_PRINCIPAL_REGION",
         ) ??
           null,

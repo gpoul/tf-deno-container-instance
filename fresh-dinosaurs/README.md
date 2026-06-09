@@ -24,8 +24,8 @@ Build the production image from this directory:
 docker build -t fresh-dinosaurs .
 ```
 
-Run it on port 8000; for Oracle NoSQL, pass the same environment variables used by the loader. For
-example, when running locally with OCI user key auth:
+Run it on port 8000; for Oracle NoSQL, pass the same environment variables used
+by the loader. For example, when running locally with OCI user key auth:
 
 ```
 docker run --rm -p 8000:8000 \
@@ -66,9 +66,24 @@ NoSQL tables in the target compartment.
 
 ### Loading Oracle NoSQL data
 
-The database loader can use an OCI config profile, or PEM key content supplied
-through the environment. For encrypted OCI keys, decrypt the PEM into
-`TF_VAR_private_key` before running the loader:
+The database loader can use OCI Cloud Shell, an OCI config profile, or PEM key
+content supplied through the environment. In OCI Cloud Shell, the loader
+auto-detects `OCI_CLI_AUTH=instance_obo_user`, reads the selected
+`OCI_CLI_CONFIG_FILE`/`OCI_CLI_PROFILE`, and uses the profile's
+`delegation_token_file` with instance-principal delegation auth:
+
+```
+export NOSQL_REGION="eu-frankfurt-1"
+export NOSQL_COMPARTMENT_OCID="ocid1.compartment..."
+deno task load-db
+```
+
+You can force this mode with `NOSQL_AUTH=cloud-shell` or
+`NOSQL_USE_CLOUD_SHELL_AUTH=true`. If the delegation token is outside the OCI
+config profile, set `NOSQL_OCI_DELEGATION_TOKEN_FILE=/path/to/delegation_token`.
+
+For encrypted OCI keys, decrypt the PEM into `TF_VAR_private_key` before running
+the loader:
 
 ```
 export TF_VAR_private_key="$(openssl rsa -in ~/.oci/oci_api_key.pem -check)"

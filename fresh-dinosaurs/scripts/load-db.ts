@@ -27,6 +27,7 @@ const DEFAULT_OCI_PROFILE = "DEFAULT";
 const DEFAULT_TIMEOUT = 5_000;
 const DEFAULT_DDL_TIMEOUT = 10_000;
 const DEFAULT_TABLE_READY_TIMEOUT = 120_000;
+const DEFAULT_IAM_AUTH_TIMEOUT = 120_000;
 const DEFAULT_POLL_DELAY = 1_000;
 const DEFAULT_MAX_MEMORY_MB = 1_024;
 const DEFAULT_SECURITY_TOKEN_REFRESH_AHEAD_MS = 15_000;
@@ -77,7 +78,11 @@ Environment fallback when --config is not provided:
   NOSQL_OCI_PRIVATE_KEY   PEM private key content for OCI user auth
   OCI_PRIVATE_KEY         Secondary PEM private key content override
   TF_VAR_private_key      Terraform-style PEM private key content override
-  NOSQL_AUTH              Set to "resource-principal" to force OCI Resource Principal auth
+  NOSQL_AUTH              Set to "resource-principal" or "cloud-shell" to force that auth mode
+  NOSQL_USE_CLOUD_SHELL_AUTH
+                          Force OCI Cloud Shell delegation-token auth when set to true/1/yes
+  NOSQL_OCI_DELEGATION_TOKEN_FILE
+                          Delegation token file override for Cloud Shell auth
   NOSQL_USE_RESOURCE_PRINCIPAL
                           Force OCI Resource Principal auth when set to true/1/yes
   NOSQL_USE_RESOURCE_PRINCIPAL_COMPARTMENT
@@ -241,10 +246,12 @@ type OciProfile = {
   pass_phrase?: string;
   region?: string;
   compartment?: string;
+  delegation_token_file?: string;
 };
 
 type CloudTarget = {
   authMode:
+    | "cloud-shell"
     | "iam-profile"
     | "iam-private-key"
     | "resource-principal"
@@ -252,6 +259,7 @@ type CloudTarget = {
   compartment?: string;
   profileName?: string;
   region?: string;
+  delegationTokenFile?: string;
   useResourcePrincipalCompartment?: boolean;
 };
 
@@ -436,6 +444,25 @@ function isResourcePrincipalAuthRequested(): boolean {
     Deno.env.get("OCI_RESOURCE_PRINCIPAL_VERSION") !== undefined;
 }
 
+function isCloudShellAuthRequested(): boolean {
+  const auth = Deno.env.get("NOSQL_AUTH")?.trim().toLowerCase();
+  if (
+    auth === "cloud-shell" ||
+    auth === "cloud_shell" ||
+    auth === "cloudshell" ||
+    auth === "instance-obo-user" ||
+    auth === "instance_obo_user" ||
+    auth === "instanceobouser"
+  ) {
+    return true;
+  }
+
+  const cliAuth = Deno.env.get("OCI_CLI_AUTH")?.trim().toLowerCase();
+  return parseBooleanEnv("NOSQL_USE_CLOUD_SHELL_AUTH") ||
+    cliAuth === "instance_obo_user" ||
+    cliAuth === "instance-obo-user";
+}
+
 function isResourcePrincipalCompartmentRequested(): boolean {
   return parseBooleanEnv("NOSQL_USE_RESOURCE_PRINCIPAL_COMPARTMENT") ||
     parseBooleanEnv("OCI_USE_RESOURCE_PRINCIPAL_COMPARTMENT");
@@ -446,12 +473,15 @@ function logCloudTarget(target: CloudTarget): void {
   const resourceCompartment = target.useResourcePrincipalCompartment
     ? ", resourceCompartment=true"
     : "";
+  const delegationToken = target.delegationTokenFile
+    ? `, delegationTokenFile=${target.delegationTokenFile}`
+    : "";
   console.log(
     `Oracle NoSQL target: auth=${target.authMode}${profile}, region=${
       target.region ?? "(SDK default)"
     }, compartment=${
       target.compartment ?? "(SDK default/root)"
-    }${resourceCompartment}`,
+    }${resourceCompartment}${delegationToken}`,
   );
 }
 
@@ -522,6 +552,7 @@ export async function createClient(configFile?: string): Promise<ClientInfo> {
   const profileName = ociProfile ?? DEFAULT_OCI_PROFILE;
   const privateKey = getEnvPrivateKey();
   const shouldUseResourcePrincipal = isResourcePrincipalAuthRequested();
+  const shouldUseCloudShellAuth = isCloudShellAuthRequested();
   const shouldUseResourcePrincipalCompartment =
     isResourcePrincipalCompartmentRequested();
 
@@ -530,7 +561,7 @@ export async function createClient(configFile?: string): Promise<ClientInfo> {
     serviceType: "CLOUD",
   };
 
-  const profile = privateKey
+  const profile = privateKey || shouldUseCloudShellAuth
     ? readOciProfile(ociConfigFile ?? getDefaultOciConfigFile(), profileName)
     : {};
   const passphrase = firstEnv(
@@ -574,6 +605,35 @@ export async function createClient(configFile?: string): Promise<ClientInfo> {
       region: cloudConfig.region as string | undefined,
       compartment: cloudConfig.compartment as string | undefined,
       useResourcePrincipalCompartment: shouldUseResourcePrincipalCompartment,
+    });
+  } else if (shouldUseCloudShellAuth) {
+    const delegationTokenFile = firstEnv(
+      "NOSQL_OCI_DELEGATION_TOKEN_FILE",
+      "OCI_DELEGATION_TOKEN_FILE",
+    ) ?? profile.delegation_token_file;
+
+    if (!delegationTokenFile) {
+      throw new Error(
+        "OCI Cloud Shell auth needs a delegation token file. " +
+          "Run from Cloud Shell with OCI_CLI_CONFIG_FILE/OCI_CLI_PROFILE set, or set NOSQL_OCI_DELEGATION_TOKEN_FILE.",
+      );
+    }
+
+    cloudConfig.auth = {
+      iam: {
+        useInstancePrincipal: true,
+        delegationTokenFile: expandHome(delegationTokenFile),
+        timeout: DEFAULT_IAM_AUTH_TIMEOUT,
+        securityTokenRefreshAheadMs: DEFAULT_SECURITY_TOKEN_REFRESH_AHEAD_MS,
+        securityTokenExpireBeforeMs: DEFAULT_SECURITY_TOKEN_EXPIRE_BEFORE_MS,
+      },
+    };
+    logCloudTarget({
+      authMode: "cloud-shell",
+      profileName,
+      region: cloudConfig.region as string | undefined,
+      compartment: cloudConfig.compartment as string | undefined,
+      delegationTokenFile,
     });
   } else if (privateKey) {
     const tenantId = firstEnv(
